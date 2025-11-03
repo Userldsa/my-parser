@@ -1,0 +1,10 @@
+name: Ping Vercel /api/parse hourly
+on:
+  schedule:
+    - cron: "0 * * * *"   # каждый час (UTC)
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsS https://my-parser-userldsa.vercel.app/api/parse || exit 1
