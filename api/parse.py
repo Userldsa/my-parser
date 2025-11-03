@@ -1,20 +1,19 @@
 import json
-from datetime import datetime
+from http.server import BaseHTTPRequestHandler
 from src.parser import run_parser
 
-def handler(request):
-    try:
-        result = run_parser()
-        payload = {
-            "ok": bool(result.get("ok")),
-            "ts": datetime.utcnow().isoformat() + "Z",
-            "result": result,
-        }
-        body = json.dumps(payload, ensure_ascii=False)
-        return (200, {"Content-Type": "application/json"}, body)
-    except Exception as e:
-        body = json.dumps(
-            {"ok": False, "error": str(e), "ts": datetime.utcnow().isoformat() + "Z"},
-            ensure_ascii=False,
-        )
-        return (500, {"Content-Type": "application/json"}, body)
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        try:
+            result = run_parser()                      # твоя логика парсера
+            status = 200 if result.get("ok") else 500
+        except Exception as e:
+            # Временная отладка: покажем ошибку в ответе
+            result = {"ok": False, "error": str(e)}
+            status = 500
+
+        body = json.dumps(result, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(body)
