@@ -1,6 +1,5 @@
 {
-    "crons": [
-      { "path": "/api/parse", "schedule": "0 * * * *" }
-    ]
-  }
-  
+  "crons": [
+    { "path": "/api/parse", "schedule": "0 9 * * *" }
+  ]
+}
