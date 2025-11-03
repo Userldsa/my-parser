@@ -22,17 +22,28 @@ def search_manga_by_title(title: str) -> str | None:
     items = data.get("data", [])
     return items[0]["id"] if items else None
 
-def get_latest_chapter_id(manga_id: str, lang: str) -> str | None:
-    # Mangadex: translatedLanguage[]=ru|en, order[chapter]=desc
+    def get_latest_chapter_id(manga_id: str, lang: str) -> str | None:
+    """
+    Берём не первую, а последнюю нормальную главу:
+    - нужный язык
+    - нет externalUrl
+    - pages > 0
+    """
     params = {
-        "limit": 1,
+        "limit": 20,  # возьмём пачку, чтобы было из чего выбирать
         "translatedLanguage[]": lang,
         "order[chapter]": "desc",
         "order[createdAt]": "desc",
-        "includes[]": "scanlation_group",
+        # "includeExternalUrl": "0",  # если бы API принимал такой флаг — но фильтруем на клиенте
     }
     data = _get(f"{API}/manga/{manga_id}/feed", params)
     items = data.get("data", [])
+    for it in items:
+        attr = it.get("attributes", {}) if isinstance(it, dict) else {}
+        # externalUrl отсутствует и есть страницы
+        if not attr.get("externalUrl") and (attr.get("pages", 0) or 0) > 0:
+            return it.get("id")
+    # если не нашли — всё равно вернём самую верхнюю (как было), но это может дать пустые pages
     return items[0]["id"] if items else None
 
 def get_chapter_images(chapter_id: str, use_data_saver: bool = True) -> list[str]:
