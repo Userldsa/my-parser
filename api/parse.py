@@ -1,31 +1,42 @@
-# api/parse.py
+# api/parse.py  (Vercel Python Serverless Function)
 import json
-from http.server import BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
 import os
-from src.parser import run_parser
+from datetime import datetime
 
-class handler(BaseHTTPRequestHandler):
-    def do_GET(self):
+def handler(request, response):
+    try:
+        # Собираем query-параметры (если есть) и пробрасываем в env,
+        # чтобы src.parser.run_parser мог их прочитать
+        q = {}
         try:
-            # читаем query и передаём в парсер через env (простая связка)
-            parsed = urlparse(self.path)
-            qs = parse_qs(parsed.query)
-            override = {
-                "title": qs.get("title", [None])[0],
-                "lang": qs.get("lang", [None])[0],
-                "manga_id": qs.get("manga_id", [None])[0],
-            }
-            os.environ["PARSER_QUERY_JSON"] = json.dumps({k:v for k,v in override.items() if v})
+            # в Vercel Python request.args может отличаться, но есть fallback:
+            if hasattr(request, "args") and request.args:
+                for k in request.args:
+                    q[k] = request.args.get(k)
+            else:
+                # на всякий случай разбор из URL
+                from urllib.parse import urlparse, parse_qs
+                parsed = urlparse(request.url)
+                qs = parse_qs(parsed.query)
+                for k, v in qs.items():
+                    q[k] = v[0] if v else None
+        except Exception:
+            pass
 
-            result = run_parser()
-            status = 200 if result.get("ok") else 500
-        except Exception as e:
-            result = {"ok": False, "error": str(e)}
-            status = 500
+        os.environ["PARSER_QUERY_JSON"] = json.dumps(q, ensure_ascii=False)
 
-        body = json.dumps(result, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(body)
+        from src.parser import run_parser
+        payload = run_parser()
+        # Если парсер вернул ok=False — отдадим 400/404, но НЕ уроним функцию
+        if isinstance(payload, dict) and not payload.get("ok", False):
+            body = json.dumps(payload, ensure_ascii=False)
+            return response.status(400).header("Content-Type", "application/json").send(body)
+
+        body = json.dumps(payload, ensure_ascii=False)
+        return response.status(200).header("Content-Type", "application/json").send(body)
+    except Exception as e:
+        body = json.dumps(
+            {"ok": False, "error": "handler_failed", "detail": str(e), "ts": datetime.utcnow().isoformat() + "Z"},
+            ensure_ascii=False,
+        )
+        return response.status(500).header("Content-Type", "application/json").send(body)

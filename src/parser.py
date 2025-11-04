@@ -6,96 +6,121 @@ from datetime import datetime
 
 API = "https://api.mangadex.org"
 
-def _get(url: str, params: dict | None = None):
-    resp = requests.get(url, params=params or {}, timeout=30)
+
+def _get(url, params=None):
+    params = params or {}
+    resp = requests.get(url, params=params, timeout=30)
     resp.raise_for_status()
     return resp.json()
 
-def search_manga_by_title(title: str) -> str | None:
-    # Mangadex: order[relevance]=desc
+
+def search_manga_by_title(title):
+    # Ищем тайтл и берём самый релевантный
     params = {
         "title": title,
         "limit": 1,
         "order[relevance]": "desc",
     }
-    data = _get(f"{API}/manga", params)
-    items = data.get("data", [])
-    return items[0]["id"] if items else None
+    data = _get(API + "/manga", params)
+    items = data.get("data") or []
+    if items:
+        first = items[0]
+        # в манга-декс id в корне объекта
+        return first.get("id")
+    return None
 
-    def get_latest_chapter_id(manga_id: str, lang: str) -> str | None:
+
+def get_latest_chapter_id(manga_id, lang):
     """
-    Берём не первую, а последнюю нормальную главу:
-    - нужный язык
-    - нет externalUrl
+    Берём свежую главу С КАРТИНКАМИ:
+    - язык = lang
+    - без externalUrl
     - pages > 0
+    Просматриваем пачку, чтобы отфильтровать «внешние» главы.
     """
     params = {
-        "limit": 20,  # возьмём пачку, чтобы было из чего выбирать
+        "limit": 40,  # побольше, чтобы наверняка нашлась нормальная
         "translatedLanguage[]": lang,
         "order[chapter]": "desc",
         "order[createdAt]": "desc",
-        # "includeExternalUrl": "0",  # если бы API принимал такой флаг — но фильтруем на клиенте
+        "includes[]": "scanlation_group",
     }
     data = _get(f"{API}/manga/{manga_id}/feed", params)
-    items = data.get("data", [])
-    for it in items:
-        attr = it.get("attributes", {}) if isinstance(it, dict) else {}
-        # externalUrl отсутствует и есть страницы
-        if not attr.get("externalUrl") and (attr.get("pages", 0) or 0) > 0:
-            return it.get("id")
-    # если не нашли — всё равно вернём самую верхнюю (как было), но это может дать пустые pages
-    return items[0]["id"] if items else None
+    items = data.get("data") or []
 
-def get_chapter_images(chapter_id: str, use_data_saver: bool = True) -> list[str]:
+    for it in items:
+        attr = (it.get("attributes") or {}) if isinstance(it, dict) else {}
+        # исключаем внешние главы и пустые
+        if not attr.get("externalUrl") and (attr.get("pages") or 0) > 0:
+            return it.get("id")
+
+    # если вдруг ни одной подходящей — вернём верхнюю (страницы могут отсутствовать)
+    return items[0].get("id") if items and isinstance(items[0], dict) else None
+
+
+def get_chapter_images(chapter_id, use_data_saver=True):
+    # Получаем список файлов и собираем абсолютные урлы
     at = _get(f"{API}/at-home/server/{chapter_id}")
-    base = at["baseUrl"]
-    ch = at["chapter"]
-    h = ch["hash"]
-    files = ch["dataSaver"] if use_data_saver else ch["data"]
+    base = at.get("baseUrl")
+    ch = at.get("chapter") or {}
+    h = ch.get("hash")
+    if not base or not h:
+        return []
+    files = ch.get("dataSaver") if use_data_saver else ch.get("data")
+    files = files or []
     kind = "data-saver" if use_data_saver else "data"
     return [f"{base}/{kind}/{h}/{name}" for name in files]
+
 
 def run_parser():
     """
     Возвращает JSON: { ok, manga_id, chapter_id, lang, pages[], pages_count, ts }
     Управление:
       - env MANGA_TITLE или MANGA_ID
-      - env MANGA_LANG (по умолчанию en)
-      - query ?title=...&lang=...&manga_id=... (через api/parse.py)
+      - env MANGA_LANG (default: en)
+      - query '?title=..&lang=..&manga_id=..' пробрасывается через env PARSER_QUERY_JSON
     """
-    title = os.getenv("MANGA_TITLE", "").strip()
-    manga_id = os.getenv("MANGA_ID", "").strip()
-    lang = os.getenv("MANGA_LANG", "en").strip().lower()
+    title = (os.getenv("MANGA_TITLE") or "").strip()
+    manga_id = (os.getenv("MANGA_ID") or "").strip()
+    lang = (os.getenv("MANGA_LANG") or "en").strip().lower()
 
-    # Оверрайды из api/parse (кладём в env для простоты связки)
+    # Оверрайды, пришедшие из api/parse
     q = os.getenv("PARSER_QUERY_JSON")
     if q:
         try:
             override = json.loads(q)
-            title = override.get("title") or title
-            manga_id = override.get("manga_id") or manga_id
-            lang = (override.get("lang") or lang).lower()
+            if isinstance(override, dict):
+                title = (override.get("title") or title or "").strip()
+                manga_id = (override.get("manga_id") or manga_id or "").strip()
+                o_lang = override.get("lang")
+                if o_lang:
+                    lang = str(o_lang).strip().lower()
         except Exception:
             pass
 
-    if not manga_id:
-        if not title:
-            return {"ok": False, "error": "Provide MANGA_TITLE or MANGA_ID"}
-        manga_id = search_manga_by_title(title)
+    try:
         if not manga_id:
-            return {"ok": False, "error": f"No manga found for title: {title}"}
+            if not title:
+                return {"ok": False, "error": "Provide MANGA_TITLE or MANGA_ID"}
+            manga_id = search_manga_by_title(title)
+            if not manga_id:
+                return {"ok": False, "error": f"No manga found for title: {title}"}
 
-    chapter_id = get_latest_chapter_id(manga_id, lang)
-    if not chapter_id:
-        return {"ok": False, "error": f"No chapters found for manga={manga_id} lang={lang}"}
+        chapter_id = get_latest_chapter_id(manga_id, lang)
+        if not chapter_id:
+            return {"ok": False, "error": f"No chapters found for manga={manga_id} lang={lang}"}
 
-    pages = get_chapter_images(chapter_id, use_data_saver=True)
-    return {
-        "ok": True,
-        "manga_id": manga_id,
-        "chapter_id": chapter_id,
-        "lang": lang,
-        "pages": pages,
-        "pages_count": len(pages),
-        "ts": datetime.utcnow().isoformat() + "Z",
-    }
+        pages = get_chapter_images(chapter_id, use_data_saver=True)
+        return {
+            "ok": True,
+            "manga_id": manga_id,
+            "chapter_id": chapter_id,
+            "lang": lang,
+            "pages": pages,
+            "pages_count": len(pages),
+            "ts": datetime.utcnow().isoformat() + "Z",
+        }
+    except requests.HTTPError as e:
+        return {"ok": False, "error": f"HTTP {e.response.status_code}", "detail": str(e)}
+    except Exception as e:
+        return {"ok": False, "error": "unexpected", "detail": str(e)}
