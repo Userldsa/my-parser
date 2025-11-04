@@ -1,7 +1,15 @@
-# api/parse.py  (Vercel Python Serverless Function)
-import json
+# api/parse.py
 import os
+import sys
+import json
 from datetime import datetime
+
+# добавить корень проекта в sys.path, чтобы импортировался src/
+ROOT = os.path.dirname(os.path.dirname(__file__))  # .. от api -> корень
+if ROOT and ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+from src.parser import run_parser
 
 def handler(request, response):
     try:
