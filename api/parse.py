@@ -2,49 +2,39 @@
 import os
 import sys
 import json
+import traceback
 from datetime import datetime
 
-# добавить корень проекта в sys.path, чтобы импортировался src/
-ROOT = os.path.dirname(os.path.dirname(__file__))  # .. от api -> корень
+# 1) Добавим корень репозитория в sys.path (api/.. -> корень)
+ROOT = os.path.dirname(os.path.dirname(__file__))
 if ROOT and ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from src.parser import run_parser
+def _json(status: int, payload: dict):
+    return status, {"Content-Type": "application/json"}, json.dumps(payload, ensure_ascii=False)
 
-def handler(request, response):
+def handler(request):
     try:
-        # Собираем query-параметры (если есть) и пробрасываем в env,
-        # чтобы src.parser.run_parser мог их прочитать
-        q = {}
-        try:
-            # в Vercel Python request.args может отличаться, но есть fallback:
-            if hasattr(request, "args") and request.args:
-                for k in request.args:
-                    q[k] = request.args.get(k)
-            else:
-                # на всякий случай разбор из URL
-                from urllib.parse import urlparse, parse_qs
-                parsed = urlparse(request.url)
-                qs = parse_qs(parsed.query)
-                for k, v in qs.items():
-                    q[k] = v[0] if v else None
-        except Exception:
-            pass
-
-        os.environ["PARSER_QUERY_JSON"] = json.dumps(q, ensure_ascii=False)
-
+        # 2) Импорт внутри try — чтобы ImportError/SyntaxError попали в ответ и логи
         from src.parser import run_parser
-        payload = run_parser()
-        # Если парсер вернул ok=False — отдадим 400/404, но НЕ уроним функцию
-        if isinstance(payload, dict) and not payload.get("ok", False):
-            body = json.dumps(payload, ensure_ascii=False)
-            return response.status(400).header("Content-Type", "application/json").send(body)
 
-        body = json.dumps(payload, ensure_ascii=False)
-        return response.status(200).header("Content-Type", "application/json").send(body)
-    except Exception as e:
-        body = json.dumps(
-            {"ok": False, "error": "handler_failed", "detail": str(e), "ts": datetime.utcnow().isoformat() + "Z"},
-            ensure_ascii=False,
-        )
-        return response.status(500).header("Content-Type", "application/json").send(body)
+        # 3) Достаём query-параметры (поддержка разных форматов запроса)
+        q = {}
+        if isinstance(request, dict):
+            q = request.get("query") or request.get("args") or {}
+        title = (q.get("title") or "").strip() or "Solo Leveling"
+        lang  = (q.get("lang")  or "").strip() or "en"
+
+        # 4) Запускаем парсер
+        result = run_parser(title=title, lang=lang)
+        if not isinstance(result, dict):
+            result = {"result": result}
+
+        result.update({"ok": True, "ts": datetime.utcnow().isoformat() + "Z"})
+        return _json(200, result)
+
+    except Exception:
+        tb = traceback.format_exc()
+        # Полный трейc попадёт в Runtime Logs Vercel
+        print(tb, flush=True)
+        return _json(500, {"ok": False, "error": "exception", "traceback": tb})
