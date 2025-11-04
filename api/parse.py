@@ -1,38 +1,23 @@
-# api/parse.py — минимальный пинг с явным лог-маркером
-import json, os, sys, time
-
-MARKER = f"[PING-{int(time.time())}] api/parse invoked"
-
-def _tuple(payload: dict):
-    return 200, {"Content-Type": "application/json"}, json.dumps(payload, ensure_ascii=False)
+# api/parse.py — самый минимальный handler без импортов и принтов
 
 def handler(request, response=None):
-    # ЯВНО пишем в stdout — это должно попасть в Runtime Logs
-    try:
-        print(MARKER)
-    except Exception:
-        pass
+    body = "OK"
+    headers = {"Content-Type": "text/plain; charset=utf-8"}
 
-    payload = {
-        "ok": True,
-        "stage": "ping-marker",
-        "marker": MARKER,
-    }
-
-    # Новый формат (есть response-объект)
+    # Если Vercel дал объект response — попробуем им воспользоваться,
+    # но даже если нет, вернём кортеж (старый формат тоже поддерживается).
     if response is not None:
         try:
             if hasattr(response, "set_header"):
-                response.set_header("Content-Type", "application/json")
+                response.set_header("Content-Type", headers["Content-Type"])
             if hasattr(response, "status"):
                 response.status(200)
-            body = json.dumps(payload, ensure_ascii=False)
             if hasattr(response, "send"):
                 return response.send(body)
             if hasattr(response, "end"):
                 return response.end(body)
         except Exception:
-            return _tuple(payload)
+            pass
 
-    # Старый формат — вернуть кортеж
-    return _tuple(payload)
+    # Старый формат (кортеж)
+    return 200, headers, body
