@@ -1,11 +1,9 @@
-# api/parse.py — самый минимальный handler без импортов и принтов
-
+# api/parse.py — проверочный хендлер без импортов
 def handler(request, response=None):
     body = "OK"
     headers = {"Content-Type": "text/plain; charset=utf-8"}
 
-    # Если Vercel дал объект response — попробуем им воспользоваться,
-    # но даже если нет, вернём кортеж (старый формат тоже поддерживается).
+    # Если рантайм Vercel даёт объект response — попробуем им воспользоваться
     if response is not None:
         try:
             if hasattr(response, "set_header"):
@@ -19,5 +17,5 @@ def handler(request, response=None):
         except Exception:
             pass
 
-    # Старый формат (кортеж)
+    # Универсальный возврат (подходит и для Vercel Python runtime)
     return 200, headers, body
